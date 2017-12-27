@@ -64,15 +64,13 @@ impl<C> Traces for TracesClient<C> where C: MiningBlockChainClient + 'static {
 			BlockNumber::Num(n) => BlockId::Number(n),
 			BlockNumber::Earliest => BlockId::Earliest,
 			BlockNumber::Latest => BlockId::Latest,
-			BlockNumber::Pending => {
-
-			}
+			BlockNumber::Pending => unimplemented!()
 		};
 
 		if block_number = BlockNumber::Pending {
 			// `Pending` is handled using miner
 			//self.client.miner().
-			Ok(None)
+			Ok(None) // TODO
 		} else {
 			Ok(self.client.block_traces(id)
 				.map(|traces| traces.into_iter().map(LocalizedTrace::from).collect()))

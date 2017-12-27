@@ -1306,9 +1306,6 @@ impl client::BlockChain for Client {
 	fn get_state(&self) -> Box<StateInfo> {
 		Box::new(self.state()) as Box<StateInfo>
 	}
-	// fn balance2<B: state::Backend, T: Into<State<B>>>(block: T, address: &Address) -> Option<U256> {
-	// 	block.into().nonce(address).ok()
-	// }
 }
 
 impl ChainInfo for Client {

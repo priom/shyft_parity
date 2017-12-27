@@ -35,7 +35,6 @@ pub use self::traits::{
     StateOrBlock, BlockChain
 };
 pub use state::StateInfo;
-
 pub use self::traits::{BlockChainClient, MiningBlockChainClient, EngineClient, ProvingBlockChainClient};
 
 pub use types::ids::*;

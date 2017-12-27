@@ -93,11 +93,6 @@ pub trait Balance {
 	/// Returns None if and only if the block's root hash has been pruned from the DB.
 	fn balance(&self, address: &Address, id: BlockId) -> Option<U256>;
 
-	/// Woo
-	// fn balance2<B: Backend, T: Into<State<B>>>(block: T, address: &Address) -> Option<U256> {
-	// 	block.into().nonce(address).ok()
-	// }
-
 	/// Get address balance at the latest block's state.
 	fn latest_balance(&self, address: &Address) -> U256 {
 		self.balance(address, BlockId::Latest)
