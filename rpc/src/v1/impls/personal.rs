@@ -20,14 +20,15 @@ use std::sync::Arc;
 use ethcore::account_provider::AccountProvider;
 use ethcore::transaction::PendingTransaction;
 
-use bigint::prelude::U128;
+use bigint::prelude::{H520, U128};
+use bytes::{Bytes, ToPretty};
 use util::Address;
-use bytes::ToPretty;
 
+use ethkey::{public_to_address, recover, Signature};
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_core::futures::{future, Future};
 use v1::helpers::errors;
-use v1::helpers::dispatch::{self, Dispatcher, SignWith};
+use v1::helpers::dispatch::{self, eth_data_hash, Dispatcher, SignWith};
 use v1::helpers::accounts::unwrap_provider;
 use v1::traits::Personal;
 use v1::types::{
@@ -79,6 +80,21 @@ impl<D: Dispatcher + 'static> PersonalClient<D> {
 					 Err(e) => Err(e),
 					 e => Err(errors::internal("Unexpected result", e)),
 				 }))
+	}
+
+	fn do_ec_recover(&self, data: RpcBytes, signature: RpcH520) -> BoxFuture<RpcH160> {
+		let signature: H520 = signature.into();
+		let signature = Signature::from_electrum(&signature);
+		let data: Bytes = data.into();
+
+		let hash = eth_data_hash(data);
+		let address = recover(&signature.into(), &hash)
+			.map_err(errors::encryption)
+			.map(|public| {
+				public_to_address(&public).into()
+			});
+
+		Box::new(future::done(address))
 	}
 
 	fn do_sign_transaction(&self, meta: Metadata, request: TransactionRequest, password: String) -> BoxFuture<(PendingTransaction, D)> {
@@ -159,7 +175,11 @@ impl<D: Dispatcher + 'static> Personal for PersonalClient<D> {
 	}
 
 	fn sign(&self, address: RpcH160, data: RpcBytes, password: String) -> BoxFuture<RpcH520> {
-		Box::new(self.do_sign(address, data, password))
+		self.do_sign(address, data, password)
+	}
+
+	fn ec_recover(&self, data: RpcBytes, signature: RpcH520) -> BoxFuture<RpcH160> {
+		self.do_ec_recover(data, signature)
 	}
 
 	fn sign_transaction(&self, meta: Metadata, request: TransactionRequest, password: String) -> BoxFuture<RpcRichRawTransaction> {
