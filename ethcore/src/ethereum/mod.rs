@@ -95,6 +95,8 @@ pub fn new_morden<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/morden.json"))
 }
 
+/// @note: add Shyft chain spec here.
+
 // For tests
 
 /// Create a new Foundation Frontier-era chain spec as though it never changes to Homestead.
