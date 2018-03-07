@@ -52,10 +52,7 @@ use transaction::{UnverifiedTransaction, SignedTransaction};
 
 use ethkey::Signature;
 use parity_machine::{Machine, LocalizedMachine as Localized};
-use bigint::prelude::U256;
-use bigint::hash::H256;
-use semantic_version::SemanticVersion;
-use util::*;
+use ethereum_types::{H256, U256, Address};
 use unexpected::{Mismatch, OutOfBounds};
 use bytes::Bytes;
 
@@ -178,15 +175,13 @@ pub enum EpochChange<M: Machine> {
 pub trait Engine<M: Machine>: Sync + Send {
 	/// The name of this engine.
 	fn name(&self) -> &str;
-	/// The version of this engine. Should be of the form
-	fn version(&self) -> SemanticVersion { SemanticVersion::new(0, 0, 0) }
 
 	/// Get access to the underlying state machine.
 	// TODO: decouple.
 	fn machine(&self) -> &M;
 
 	/// The number of additional header fields required for this engine.
-	fn seal_fields(&self) -> usize { 0 }
+	fn seal_fields(&self, _header: &M::Header) -> usize { 0 }
 
 	/// Additional engine-specific information for the user/developer concerning `header`.
 	fn extra_info(&self, _header: &M::Header) -> BTreeMap<String, String> { BTreeMap::new() }
@@ -388,11 +383,6 @@ pub trait EthEngine: Engine<::machine::EthereumMachine> {
 	// TODO: consider including State in the params.
 	fn verify_transaction_basic(&self, t: &UnverifiedTransaction, header: &Header) -> Result<(), Error> {
 		self.machine().verify_transaction_basic(t, header)
-	}
-
-	/// If this machine supports wasm.
-	fn supports_wasm(&self) -> bool {
-		self.machine().supports_wasm()
 	}
 
 	/// Additional information.

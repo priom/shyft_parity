@@ -21,7 +21,7 @@ use rlp::*;
 use super::node::{Node, OwnedNode};
 use super::lookup::Lookup;
 use super::{Trie, TrieItem, TrieError, TrieIterator, Query};
-use bigint::hash::H256;
+use ethereum_types::H256;
 use bytes::{ToPretty, Bytes};
 
 /// A `Trie` implementation using a generic `HashDB` backing database.
@@ -34,12 +34,12 @@ use bytes::{ToPretty, Bytes};
 /// extern crate patricia_trie as trie;
 /// extern crate hashdb;
 /// extern crate memorydb;
-/// extern crate ethcore_bigint as bigint;
+/// extern crate ethereum_types;
 ///
 /// use trie::*;
 /// use hashdb::*;
 /// use memorydb::*;
-/// use bigint::hash::*;
+/// use ethereum_types::H256;
 ///
 /// fn main() {
 ///   let mut memdb = MemoryDB::new();
@@ -54,7 +54,7 @@ pub struct TrieDB<'db> {
 	db: &'db HashDB,
 	root: &'db H256,
 	/// The number of hashes performed so far in operations on this trie.
-	pub hash_count: usize,
+	hash_count: usize,
 }
 
 impl<'db> TrieDB<'db> {
@@ -180,7 +180,7 @@ enum Status {
 	Exiting,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 struct Crumb {
 	node: OwnedNode,
 	status: Status,
@@ -200,7 +200,6 @@ impl Crumb {
 }
 
 /// Iterator for going through all values in the trie.
-#[derive(Clone)]
 pub struct TrieDBIterator<'a> {
 	db: &'a TrieDB<'a>,
 	trail: Vec<Crumb>,
@@ -340,11 +339,7 @@ impl<'a> Iterator for TrieDBIterator<'a> {
 
 		loop {
 			let iter_step = {
-				match self.trail.last_mut() {
-					Some(b) => { b.increment(); },
-					None => return None,
-				}
-
+				self.trail.last_mut()?.increment();
 				let b = self.trail.last().expect("trail.last_mut().is_some(); qed");
 
 				match (b.status.clone(), &b.node) {

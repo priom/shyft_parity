@@ -20,12 +20,13 @@ extern crate heapsize;
 #[macro_use]
 extern crate log;
 
-extern crate ethcore_bigint as bigint;
+extern crate ethereum_types;
 extern crate ethcore_bytes as bytes;
 extern crate hashdb;
 extern crate kvdb;
 extern crate memorydb;
 extern crate parking_lot;
+extern crate plain_hasher;
 extern crate rlp;
 extern crate util_error as error;
 
@@ -51,7 +52,7 @@ pub mod overlaydb;
 /// Export the `JournalDB` trait.
 pub use self::traits::JournalDB;
 
-/// A journal database algorithm.
+/// Journal database operating strategy.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Algorithm {
 	/// Keep all keys forever.

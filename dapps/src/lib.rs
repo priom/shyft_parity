@@ -32,9 +32,8 @@ extern crate zip;
 
 extern crate jsonrpc_http_server;
 
-extern crate ethcore_util as util;
-extern crate ethcore_bigint as bigint;
 extern crate ethcore_bytes as bytes;
+extern crate ethereum_types;
 extern crate fetch;
 extern crate node_health;
 extern crate parity_dapps_glue as parity_dapps;
@@ -109,7 +108,7 @@ impl Endpoints {
 	/// Returns a current list of app endpoints.
 	pub fn list(&self) -> Vec<apps::App> {
 		self.endpoints.read().iter().filter_map(|(ref k, ref e)| {
-			e.info().map(|ref info| apps::App::from_info(k, info))
+			e.info().map(|ref info| info.with_id(k))
 		}).collect()
 	}
 

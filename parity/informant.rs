@@ -22,7 +22,7 @@ use std::sync::{Arc};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering as AtomicOrdering};
 use std::time::{Instant, Duration};
 
-use ethcore::client::{BlockId, BlockChainClient, BlockChainInfo, BlockQueueInfo, ChainNotify, ClientReport, Client};
+use ethcore::client::{BlockId, BlockChainClient, ChainInfo, BlockInfo, BlockChainInfo, BlockQueueInfo, ChainNotify, ClientReport, Client};
 use ethcore::header::BlockNumber;
 use ethcore::service::ClientIoMessage;
 use ethcore::snapshot::{RestorationStatus, SnapshotService as SS};
@@ -35,7 +35,7 @@ use light::client::LightChainClient;
 use number_prefix::{binary_prefix, Standalone, Prefixed};
 use parity_rpc::{is_major_importing};
 use parity_rpc::informant::RpcStats;
-use bigint::hash::H256;
+use ethereum_types::H256;
 use bytes::Bytes;
 use parking_lot::{RwLock, Mutex};
 
