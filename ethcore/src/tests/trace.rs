@@ -16,16 +16,15 @@
 
 //! Client tests of tracing
 
+use tempdir::TempDir;
 use ethkey::KeyPair;
 use hash::keccak;
 use block::*;
-use bigint::prelude::U256;
-use util::*;
+use ethereum_types::{U256, Address};
 use io::*;
 use spec::*;
 use client::*;
 use tests::helpers::*;
-use devtools::RandomTempPath;
 use client::{BlockChainClient, Client, ClientConfig};
 use kvdb_rocksdb::{Database, DatabaseConfig};
 use std::sync::Arc;
@@ -38,7 +37,7 @@ use trace::trace::Action::Reward;
 
 #[test]
 fn can_trace_block_and_uncle_reward() {
-	let dir = RandomTempPath::new();
+	let tempdir = TempDir::new("").unwrap();
 	let spec = Spec::new_test_with_reward();
 	let engine = &*spec.engine;
 
@@ -46,7 +45,7 @@ fn can_trace_block_and_uncle_reward() {
 	let db_config = DatabaseConfig::with_columns(::db::NUM_COLUMNS);
 	let mut client_config = ClientConfig::default();
 	client_config.tracing.enabled = true;
-	let client_db = Arc::new(Database::open(&db_config, dir.as_path().to_str().unwrap()).unwrap());
+	let client_db = Arc::new(Database::open(&db_config, tempdir.path().to_str().unwrap()).unwrap());
 	let client = Client::new(
 		client_config,
 		&spec,
@@ -89,7 +88,6 @@ fn can_trace_block_and_uncle_reward() {
 		vec![],
 		false,
 	).unwrap();
-	root_block.set_difficulty(U256::from(0x20000));
 	rolling_timestamp += 10;
 	root_block.set_timestamp(rolling_timestamp);
 
@@ -118,7 +116,6 @@ fn can_trace_block_and_uncle_reward() {
 		vec![],
 		false,
 	).unwrap();
-	parent_block.set_difficulty(U256::from(0x20000));
 	rolling_timestamp += 10;
 	parent_block.set_timestamp(rolling_timestamp);
 
@@ -146,7 +143,6 @@ fn can_trace_block_and_uncle_reward() {
 		vec![],
 		false
 		).unwrap();
-	block.set_difficulty(U256::from(0x20000));
 	rolling_timestamp += 10;
 	block.set_timestamp(rolling_timestamp);
 

@@ -40,11 +40,11 @@ use executed::{Executed, ExecutionError};
 use types::state_diff::StateDiff;
 use transaction::SignedTransaction;
 use state_db::StateDB;
-use evm::{Factory as EvmFactory};
+use factory::VmFactory;
 
-use bigint::prelude::U256;
-use bigint::hash::H256;
-use util::*;
+use ethereum_types::{H256, U256, Address};
+use hashdb::{HashDB, AsHashDB};
+use kvdb::DBValue;
 use bytes::Bytes;
 
 use trie;
@@ -193,7 +193,7 @@ impl AccountEntry {
 /// `Err(ExecutionError::Internal)` indicates failure, everything else indicates
 /// a successful proof (as the transaction itself may be poorly chosen).
 pub fn check_proof(
-	proof: &[::util::DBValue],
+	proof: &[DBValue],
 	root: H256,
 	transaction: &SignedTransaction,
 	machine: &Machine,
@@ -334,6 +334,28 @@ pub enum CleanupMode<'a> {
 	TrackTouched(&'a mut HashSet<Address>),
 }
 
+/// Provides subset of `State` methods to query state information
+pub trait StateInfo {
+	/// Get the nonce of account `a`.
+	fn nonce(&self, a: &Address) -> trie::Result<U256>;
+
+	/// Get the balance of account `a`.
+	fn balance(&self, a: &Address) -> trie::Result<U256>;
+
+	/// Mutate storage of account `address` so that it is `value` for `key`.
+	fn storage_at(&self, address: &Address, key: &H256) -> trie::Result<H256>;
+
+	/// Get accounts' code.
+	fn code(&self, a: &Address) -> trie::Result<Option<Arc<Bytes>>>;
+}
+
+impl<B: Backend> StateInfo for State<B> {
+	fn nonce(&self, a: &Address) -> trie::Result<U256> { State::nonce(self, a) }
+	fn balance(&self, a: &Address) -> trie::Result<U256> { State::balance(self, a) }
+	fn storage_at(&self, address: &Address, key: &H256) -> trie::Result<H256> { State::storage_at(self, address, key) }
+	fn code(&self, address: &Address) -> trie::Result<Option<Arc<Bytes>>> { State::code(self, address) }
+}
+
 const SEC_TRIE_DB_UNWRAP_STR: &'static str = "A state can only be created with valid root. Creating a SecTrieDB with a valid root will not fail. \
 			 Therefore creating a SecTrieDB with this state's root will not fail.";
 
@@ -376,7 +398,7 @@ impl<B: Backend> State<B> {
 	}
 
 	/// Get a VM factory that can execute on this state.
-	pub fn vm_factory(&self) -> EvmFactory {
+	pub fn vm_factory(&self) -> VmFactory {
 		self.factories.vm.clone()
 	}
 
@@ -644,7 +666,7 @@ impl<B: Backend> State<B> {
 
 	/// Mutate storage of account `a` so that it is `value` for `key`.
 	pub fn set_storage(&mut self, a: &Address, key: H256, value: H256) -> trie::Result<()> {
-		trace!(target: "state", "set_storage({}:{} to {})", a, key.hex(), value.hex());
+		trace!(target: "state", "set_storage({}:{:x} to {:x})", a, key, value);
 		if self.storage_at(a, &key)? != value {
 			self.require(a, false)?.set_storage(key, value)
 		}
@@ -1065,9 +1087,7 @@ mod tests {
 	use hash::keccak;
 	use super::*;
 	use ethkey::Secret;
-	use bigint::prelude::U256;
-	use bigint::hash::H256;
-	use util::Address;
+	use ethereum_types::{H256, U256, Address};
 	use tests::helpers::*;
 	use machine::EthereumMachine;
 	use vm::EnvInfo;
@@ -1406,7 +1426,7 @@ mod tests {
 	}
 
 	#[test]
-	fn should_not_trace_delegatecall() {
+	fn should_trace_delegatecall_properly() {
 		init_log();
 
 		let mut state = get_temp_state();
@@ -1426,7 +1446,7 @@ mod tests {
 		}.sign(&secret(), None);
 
 		state.init_code(&0xa.into(), FromHex::from_hex("6000600060006000600b618000f4").unwrap()).unwrap();
-		state.init_code(&0xb.into(), FromHex::from_hex("6000").unwrap()).unwrap();
+		state.init_code(&0xb.into(), FromHex::from_hex("60056000526001601ff3").unwrap()).unwrap();
 		let result = state.apply(&info, &machine, &t, true).unwrap();
 
 		let expected_trace = vec![FlatTrace {
@@ -1441,23 +1461,23 @@ mod tests {
 				call_type: CallType::Call,
 			}),
 			result: trace::Res::Call(trace::CallResult {
-				gas_used: U256::from(721), // in post-eip150
+				gas_used: U256::from(736), // in post-eip150
 				output: vec![]
 			}),
 		}, FlatTrace {
 			trace_address: vec![0].into_iter().collect(),
 			subtraces: 0,
 			action: trace::Action::Call(trace::Call {
-				from: "9cce34f7ab185c7aba1b7c8140d620b4bda941d6".into(),
-				to: 0xa.into(),
+				from: 0xa.into(),
+				to: 0xb.into(),
 				value: 0.into(),
 				gas: 32768.into(),
 				input: vec![],
 				call_type: CallType::DelegateCall,
 			}),
 			result: trace::Res::Call(trace::CallResult {
-				gas_used: 3.into(),
-				output: vec![],
+				gas_used: 18.into(),
+				output: vec![5],
 			}),
 		}];
 
@@ -2087,7 +2107,7 @@ mod tests {
 		let a = Address::zero();
 		state.require(&a, false).unwrap();
 		state.commit().unwrap();
-		assert_eq!(state.root().hex(), "0ce23f3c809de377b008a4a3ee94a0834aac8bec1f86e28ffe4fdb5a15b0c785");
+		assert_eq!(*state.root(), "0ce23f3c809de377b008a4a3ee94a0834aac8bec1f86e28ffe4fdb5a15b0c785".into());
 	}
 
 	#[test]
@@ -2124,7 +2144,7 @@ mod tests {
 	fn create_empty() {
 		let mut state = get_temp_state();
 		state.commit().unwrap();
-		assert_eq!(state.root().hex(), "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
+		assert_eq!(*state.root(), "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".into());
 	}
 
 	#[test]

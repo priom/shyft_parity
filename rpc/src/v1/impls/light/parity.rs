@@ -27,6 +27,7 @@ use ethsync::LightSyncProvider;
 use ethcore::account_provider::AccountProvider;
 use ethcore_logger::RotatingLogger;
 use node_health::{NodeHealth, Health};
+use ethcore::ids::BlockId;
 
 use light::client::LightChainClient;
 
@@ -60,6 +61,7 @@ pub struct ParityClient {
 	dapps_address: Option<Host>,
 	ws_address: Option<Host>,
 	eip86_transition: u64,
+	gas_price_percentile: usize,
 }
 
 impl ParityClient {
@@ -74,6 +76,7 @@ impl ParityClient {
 		signer: Option<Arc<SignerService>>,
 		dapps_address: Option<Host>,
 		ws_address: Option<Host>,
+		gas_price_percentile: usize,
 	) -> Self {
 		ParityClient {
 			light_dispatch,
@@ -85,7 +88,8 @@ impl ParityClient {
 			dapps_address,
 			ws_address,
 			eip86_transition: client.eip86_transition(),
-			client: client,
+			client,
+			gas_price_percentile,
 		}
 	}
 
@@ -96,6 +100,7 @@ impl ParityClient {
 			on_demand: self.light_dispatch.on_demand.clone(),
 			sync: self.light_dispatch.sync.clone(),
 			cache: self.light_dispatch.cache.clone(),
+			gas_price_percentile: self.gas_price_percentile,
 		}
 	}
 }
@@ -204,7 +209,12 @@ impl Parity for ParityClient {
 	}
 
 	fn registry_address(&self) -> Result<Option<H160>> {
-		Err(errors::light_unimplemented(None))
+		let reg = self.light_dispatch.client.engine().params().registrar;
+		if reg == Default::default() {
+			Ok(None)
+		} else {
+			Ok(Some(reg.into()))
+		}
 	}
 
 	fn rpc_settings(&self) -> Result<RpcSettings> {
@@ -396,7 +406,16 @@ impl Parity for ParityClient {
 			}
 		};
 
-		Box::new(self.fetcher().header(number.unwrap_or_default().into()).map(from_encoded))
+		// Note: Here we treat `Pending` as `Latest`.
+		//       Since light clients don't produce pending blocks
+		//       (they don't have state) we can safely fallback to `Latest`.
+		let id = match number.unwrap_or_default() {
+			BlockNumber::Num(n) => BlockId::Number(n),
+			BlockNumber::Earliest => BlockId::Earliest,
+			BlockNumber::Latest | BlockNumber::Pending => BlockId::Latest,
+		};
+
+		Box::new(self.fetcher().header(id).map(from_encoded))
 	}
 
 	fn ipfs_cid(&self, content: Bytes) -> Result<String> {

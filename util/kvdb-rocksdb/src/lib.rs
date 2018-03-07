@@ -24,15 +24,14 @@ extern crate parking_lot;
 extern crate regex;
 extern crate rocksdb;
 
-extern crate ethcore_bigint as bigint;
+extern crate ethereum_types;
 extern crate kvdb;
-extern crate rlp;
 
 use std::cmp;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::{PathBuf, Path};
-use std::{mem, fs, io};
+use std::{fs, io, mem, result};
 
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use rocksdb::{
@@ -42,7 +41,6 @@ use rocksdb::{
 use interleaved_ordered::{interleave_ordered, InterleaveOrdered};
 
 use elastic_array::ElasticArray32;
-use rlp::{UntrustedRlp, RlpType, Compressible};
 use kvdb::{KeyValueDB, DBTransaction, DBValue, DBOp, Result};
 
 #[cfg(target_os = "linux")]
@@ -56,7 +54,6 @@ const DB_DEFAULT_MEMORY_BUDGET_MB: usize = 128;
 
 enum KeyState {
 	Insert(DBValue),
-	InsertCompressed(DBValue),
 	Delete,
 }
 
@@ -257,7 +254,25 @@ pub struct Database {
 	flushing_lock: Mutex<bool>,
 }
 
+#[inline]
+fn check_for_corruption<T, P: AsRef<Path>>(path: P, res: result::Result<T, String>) -> result::Result<T, String> {
+	if let Err(ref s) = res {
+		if s.starts_with("Corruption:") {
+			warn!("DB corrupted: {}. Repair will be triggered on next restart", s);
+			let _ = fs::File::create(path.as_ref().join(Database::CORRUPTION_FILE_NAME));
+		}
+	}
+
+	res
+}
+
+fn is_corrupted(s: &str) -> bool {
+	s.starts_with("Corruption:") || s.starts_with("Invalid argument: You have to open all column families")
+}
+
 impl Database {
+	const CORRUPTION_FILE_NAME: &'static str = "CORRUPTED";
+
 	/// Open database with default settings.
 	pub fn open_default(path: &str) -> Result<Database> {
 		Database::open(&DatabaseConfig::default(), path)
@@ -287,6 +302,14 @@ impl Database {
 			block_opts.set_cache(cache);
 		}
 
+		// attempt database repair if it has been previously marked as corrupted
+		let db_corrupted = Path::new(path).join(Database::CORRUPTION_FILE_NAME);
+		if db_corrupted.exists() {
+			warn!("DB has been previously marked as corrupted, attempting repair");
+			DB::repair(&opts, path)?;
+			fs::remove_file(db_corrupted)?;
+		}
+
 		let columns = config.columns.unwrap_or(0) as usize;
 
 		let mut cf_options = Vec::with_capacity(columns);
@@ -306,12 +329,11 @@ impl Database {
 
 		let mut cfs: Vec<Column> = Vec::new();
 		let db = match config.columns {
-			Some(columns) => {
+			Some(_) => {
 				match DB::open_cf(&opts, path, &cfnames, &cf_options) {
 					Ok(db) => {
 						cfs = cfnames.iter().map(|n| db.cf_handle(n)
 							.expect("rocksdb opens a cf_handle for each cfname; qed")).collect();
-						assert!(cfs.len() == columns as usize);
 						Ok(db)
 					}
 					Err(_) => {
@@ -321,7 +343,7 @@ impl Database {
 								cfs = cfnames.iter().enumerate().map(|(i, n)| db.create_cf(n, &cf_options[i])).collect::<::std::result::Result<_, _>>()?;
 								Ok(db)
 							},
-							err @ Err(_) => err,
+							err => err,
 						}
 					}
 				}
@@ -331,14 +353,18 @@ impl Database {
 
 		let db = match db {
 			Ok(db) => db,
-			Err(ref s) if s.starts_with("Corruption:") => {
-				info!("{}", s);
-				info!("Attempting DB repair for {}", path);
+			Err(ref s) if is_corrupted(s) => {
+				warn!("DB corrupted: {}, attempting repair", s);
 				DB::repair(&opts, path)?;
 
 				match cfnames.is_empty() {
 					true => DB::open(&opts, path)?,
-					false => DB::open_cf(&opts, path, &cfnames, &cf_options)?
+					false => {
+						let db = DB::open_cf(&opts, path, &cfnames, &cf_options)?;
+						cfs = cfnames.iter().map(|n| db.cf_handle(n)
+							.expect("rocksdb opens a cf_handle for each cfname; qed")).collect();
+						db
+					},
 				}
 			},
 			Err(s) => { return Err(s.into()); }
@@ -350,7 +376,7 @@ impl Database {
 			write_opts: write_opts,
 			overlay: RwLock::new((0..(num_cols + 1)).map(|_| HashMap::new()).collect()),
 			flushing: RwLock::new((0..(num_cols + 1)).map(|_| HashMap::new()).collect()),
-			flushing_lock: Mutex::new((false)),
+			flushing_lock: Mutex::new(false),
 			path: path.to_owned(),
 			read_opts: read_opts,
 			block_opts: block_opts,
@@ -376,10 +402,6 @@ impl Database {
 				DBOp::Insert { col, key, value } => {
 					let c = Self::to_overlay_column(col);
 					overlay[c].insert(key, KeyState::Insert(value));
-				},
-				DBOp::InsertCompressed { col, key, value } => {
-					let c = Self::to_overlay_column(col);
-					overlay[c].insert(key, KeyState::InsertCompressed(value));
 				},
 				DBOp::Delete { col, key } => {
 					let c = Self::to_overlay_column(col);
@@ -413,19 +435,15 @@ impl Database {
 										batch.put(&key, &value)?;
 									}
 								},
-								KeyState::InsertCompressed(ref value) => {
-									let compressed = UntrustedRlp::new(&value).compress(RlpType::Blocks);
-									if c > 0 {
-										batch.put_cf(cfs[c - 1], &key, &compressed)?;
-									} else {
-										batch.put(&key, &value)?;
-									}
-								}
 							}
 						}
 					}
 				}
-				db.write_opt(batch, &self.write_opts)?;
+
+				check_for_corruption(
+					&self.path,
+					db.write_opt(batch, &self.write_opts))?;
+
 				for column in self.flushing.write().iter_mut() {
 					column.clear();
 					column.shrink_to_fit();
@@ -458,20 +476,22 @@ impl Database {
 				let batch = WriteBatch::new();
 				let ops = tr.ops;
 				for op in ops {
+					// remove any buffered operation for this key
+					self.overlay.write()[Self::to_overlay_column(op.col())].remove(op.key());
+
 					match op {
 						DBOp::Insert { col, key, value } => {
 							col.map_or_else(|| batch.put(&key, &value), |c| batch.put_cf(cfs[c as usize], &key, &value))?
-						},
-						DBOp::InsertCompressed { col, key, value } => {
-							let compressed = UntrustedRlp::new(&value).compress(RlpType::Blocks);
-							col.map_or_else(|| batch.put(&key, &compressed), |c| batch.put_cf(cfs[c as usize], &key, &compressed))?
 						},
 						DBOp::Delete { col, key } => {
 							col.map_or_else(|| batch.delete(&key), |c| batch.delete_cf(cfs[c as usize], &key))?
 						},
 					}
 				}
-				db.write_opt(batch, &self.write_opts).map_err(Into::into)
+
+				check_for_corruption(
+					&self.path,
+					db.write_opt(batch, &self.write_opts)).map_err(Into::into)
 			},
 			None => Err("Database is closed".into())
 		}
@@ -483,12 +503,12 @@ impl Database {
 			Some(DBAndColumns { ref db, ref cfs }) => {
 				let overlay = &self.overlay.read()[Self::to_overlay_column(col)];
 				match overlay.get(key) {
-					Some(&KeyState::Insert(ref value)) | Some(&KeyState::InsertCompressed(ref value)) => Ok(Some(value.clone())),
+					Some(&KeyState::Insert(ref value)) => Ok(Some(value.clone())),
 					Some(&KeyState::Delete) => Ok(None),
 					None => {
 						let flushing = &self.flushing.read()[Self::to_overlay_column(col)];
 						match flushing.get(key) {
-							Some(&KeyState::Insert(ref value)) | Some(&KeyState::InsertCompressed(ref value)) => Ok(Some(value.clone())),
+							Some(&KeyState::Insert(ref value)) => Ok(Some(value.clone())),
 							Some(&KeyState::Delete) => Ok(None),
 							None => {
 								col.map_or_else(
@@ -523,8 +543,7 @@ impl Database {
 				let overlay = &self.overlay.read()[Self::to_overlay_column(col)];
 				let mut overlay_data = overlay.iter()
 					.filter_map(|(k, v)| match *v {
-						KeyState::Insert(ref value) |
-						KeyState::InsertCompressed(ref value) =>
+						KeyState::Insert(ref value) =>
 							Some((k.clone().into_vec().into_boxed_slice(), value.clone().into_vec().into_boxed_slice())),
 						KeyState::Delete => None,
 					}).collect::<Vec<_>>();
@@ -699,7 +718,7 @@ mod tests {
 
 	use std::str::FromStr;
 	use self::tempdir::TempDir;
-	use bigint::hash::H256;
+	use ethereum_types::H256;
 	use super::*;
 
 	fn test_db(config: &DatabaseConfig) {
@@ -820,5 +839,22 @@ mod tests {
 			let db = Database::open(&config, tempdir.path().to_str().unwrap()).unwrap();
 			assert_eq!(db.num_columns(), 0);
 		}
+	}
+
+	#[test]
+	fn write_clears_buffered_ops() {
+		let tempdir = TempDir::new("").unwrap();
+		let config = DatabaseConfig::default();
+		let db = Database::open(&config, tempdir.path().to_str().unwrap()).unwrap();
+
+		let mut batch = db.transaction();
+		batch.put(None, b"foo", b"bar");
+		db.write_buffered(batch);
+
+		let mut batch = db.transaction();
+		batch.put(None, b"foo", b"baz");
+		db.write(batch).unwrap();
+
+		assert_eq!(db.get(None, b"foo").unwrap().unwrap().as_ref(), b"baz");
 	}
 }

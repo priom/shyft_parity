@@ -18,10 +18,10 @@ use std::sync::Arc;
 use std::collections::{HashMap, BTreeMap};
 use std::io;
 use bytes::Bytes;
-use network::{NetworkProtocolHandler, NetworkService, NetworkContext, HostInfo, PeerId, ProtocolId,
-	NetworkConfiguration as BasicNetworkConfiguration, NonReservedPeerMode, Error, ErrorKind, ConnectionFilter};
-use bigint::prelude::U256;
-use bigint::hash::{H256, H512};
+use devp2p::{NetworkService, ConnectionFilter};
+use network::{NetworkProtocolHandler, NetworkContext, HostInfo, PeerId, ProtocolId,
+	NetworkConfiguration as BasicNetworkConfiguration, NonReservedPeerMode, Error, ErrorKind};
+use ethereum_types::{H256, H512, U256};
 use io::{TimerToken};
 use ethcore::ethstore::ethkey::Secret;
 use ethcore::client::{BlockChainClient, ChainNotify};
@@ -170,7 +170,18 @@ pub struct AttachedProtocol {
 }
 
 impl AttachedProtocol {
-	fn register(&self, _network: &NetworkService) {}
+	fn register(&self, network: &NetworkService) {
+		let res = network.register_protocol(
+			self.handler.clone(),
+			self.protocol_id,
+			self.packet_count,
+			self.versions
+		);
+
+		if let Err(e) = res {
+			warn!(target: "sync", "Error attaching protocol {:?}: {:?}", self.protocol_id, e);
+		}
+	}
 }
 
 /// EthSync initialization parameters.
@@ -283,7 +294,7 @@ impl SyncProvider for EthSync {
 				};
 
 				Some(PeerInfo {
-					id: session_info.id.map(|id| id.hex()),
+					id: session_info.id.map(|id| format!("{:x}", id)),
 					client_version: session_info.client_version,
 					capabilities: session_info.peer_capabilities.into_iter().map(|c| c.to_string()).collect(),
 					remote_address: session_info.remote_address,
@@ -383,7 +394,7 @@ impl ChainNotify for EthSync {
 			};
 
 			let chain_info = self.eth_handler.chain.chain_info();
-			light_proto.make_announcement(context, Announcement {
+			light_proto.make_announcement(&context, Announcement {
 				head_hash: chain_info.best_block_hash,
 				head_num: chain_info.best_block_number,
 				head_td: chain_info.total_difficulty,
@@ -441,7 +452,7 @@ impl ChainNotify for EthSync {
 struct TxRelay(Arc<BlockChainClient>);
 
 impl LightHandler for TxRelay {
-	fn on_transactions(&self, ctx: &EventContext, relay: &[::ethcore::transaction::UnverifiedTransaction]) {
+	fn on_transactions(&self, ctx: &EventContext, relay: &[::transaction::UnverifiedTransaction]) {
 		trace!(target: "pip", "Relaying {} transactions from peer {}", relay.len(), ctx.peer());
 		self.0.queue_transactions(relay.iter().map(|tx| ::rlp::encode(tx).into_vec()).collect(), ctx.peer())
 	}
@@ -727,7 +738,7 @@ impl LightSync {
 	{
 		self.network.with_context_eval(
 			self.subprotocol_name,
-			move |ctx| self.proto.with_context(ctx, f),
+			move |ctx| self.proto.with_context(&ctx, f),
 		)
 	}
 }
@@ -811,7 +822,7 @@ impl LightSyncProvider for LightSync {
 				};
 
 				Some(PeerInfo {
-					id: session_info.id.map(|id| id.hex()),
+					id: session_info.id.map(|id| format!("{:x}", id)),
 					client_version: session_info.client_version,
 					capabilities: session_info.peer_capabilities.into_iter().map(|c| c.to_string()).collect(),
 					remote_address: session_info.remote_address,
