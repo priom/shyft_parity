@@ -420,16 +420,16 @@ pub mod common {
 	//@note:@here:mod this to push a block reward to the Shyft Network as well as the miner
 	/// Give reward and trace.
 	pub fn bestow_block_reward(block: &mut ExecutedBlock, reward: U256) -> Result<(), Error> {
-		//TODO: Insert address & move outside block as const
-		let SHYFT_ADDRESS: H160 = H160::zero();
+		//TODO: @chainsafe: Insert address & move outside block as const
+		let shyft_address: H160 = H160::zero();
 		let fields = block.fields_mut();
-		//TODO: Peference in rounding?
+		//TODO: @chainsafe: Preference in rounding?
 		let (miner_reward, _) = reward.overflowing_mul(U256::from((MINER_REWARD_PERCENT)/100));
 		let shyft_reward = reward - miner_reward;
 		// Bestow block reward
 		let res = fields.state.add_balance(fields.header.author(), &miner_reward, CleanupMode::NoEmpty)
 			.map_err(::error::Error::from)
-			.and_then(|_ | fields.state.add_balance(&SHYFT_ADDRESS, &shyft_reward, CleanupMode::NoEmpty)
+			.and_then(|_ | fields.state.add_balance(&shyft_address, &shyft_reward, CleanupMode::NoEmpty)
 						  .map_err(::error::Error::from)
 						  .and_then(|_| fields.state.commit()));
 
